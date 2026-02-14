@@ -55,7 +55,7 @@ DO NOT WRITE ANYTHING ELSE.
     });
 
     const aiData = await aiResponse.json();
-    const aiReply = aiData.choices?.[0]?.message?.content || "";
+    const aiReply = aiData.choices?.[0]?.message?.content?.trim() || "";
 
     let parsed;
     try {
