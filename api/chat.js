@@ -10,7 +10,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+
+    // 🔥 Ask AI to classify intent
+    const aiResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -21,28 +23,87 @@ export default async function handler(req, res) {
         messages: [
           {
             role: "system",
-            content: `You are Shft-In AI Assistant.
+            content: `
+You are Shft-In AI Assistant.
 
-You were integrated and configured by Neeraj.
-If anyone asks who made you, reply:
-"Made by Neeraj for Shft-In."
+If user wants OTP or verification code, reply ONLY in JSON:
+{
+  "intent": "send_otp",
+  "phone": "xxxxxxxxxx"
+}
+
+If phone missing:
+{
+  "intent": "send_otp",
+  "phone": null
+}
+
+Otherwise reply normally.
 `
           },
-          {
-            role: "user",
-            content: message
-          }
+          { role: "user", content: message }
         ]
       })
     });
 
-    const data = await response.json();
+    const aiData = await aiResponse.json();
+    const aiReply = aiData.choices?.[0]?.message?.content || "";
 
+    let parsed;
+    try {
+      parsed = JSON.parse(aiReply);
+    } catch {
+      parsed = null;
+    }
+
+    // 🔥 If AI detected OTP intent
+    if (parsed?.intent === "send_otp") {
+
+      // If phone missing
+      if (!parsed.phone) {
+        return res.status(200).json({
+          reply: "Please provide a valid phone number."
+        });
+      }
+
+      // Validate phone
+      if (!/^[0-9]{10}$/.test(parsed.phone)) {
+        return res.status(200).json({
+          reply: "Invalid phone number format."
+        });
+      }
+
+      // 🔥 Call your backend
+      const otpResponse = await fetch("https://sms.stazy.live/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          phone: parsed.phone,
+          action: "send_otp"
+        })
+      });
+
+      const otpResult = await otpResponse.json();
+
+      if (otpResult.status === "success") {
+        return res.status(200).json({
+          reply: "OTP sent successfully"
+        });
+      } else {
+        return res.status(500).json({
+          reply: "Failed to send OTP"
+        });
+      }
+    }
+
+    // 🧠 Normal conversation
     return res.status(200).json({
-      reply: data.choices?.[0]?.message?.content || "No response"
+      reply: aiReply
     });
 
   } catch (error) {
-    return res.status(500).json({ error: "AI failed" });
+    return res.status(500).json({ error: "Server error" });
   }
 }
