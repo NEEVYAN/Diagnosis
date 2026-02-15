@@ -11,7 +11,6 @@ export default async function handler(req, res) {
 
   try {
 
-    // 🔥 Ask AI to classify intent
     const aiResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -26,28 +25,21 @@ export default async function handler(req, res) {
             content: `
 You are Shft-In AI Assistant made by Neeraj.
 
-STRICT RULES:
-- If the user message contains words like OTP, verify, verification, login code, send code
-- You MUST respond ONLY with valid JSON.
-- No extra text.
-- No explanation.
-- No markdown.
-- No backticks.
+You must ALWAYS respond in valid JSON.
 
 FORMAT:
 
-If phone present:
+If OTP request:
 {"intent":"send_otp","phone":"xxxxxxxxxx"}
 
 If phone missing:
 {"intent":"send_otp","phone":null}
 
-Otherwise:
-{"intent":"normal"}
+If normal:
+{"intent":"normal","reply":"full reply here"}
 
 DO NOT WRITE ANYTHING ELSE.
 `
-
           },
           { role: "user", content: message }
         ]
@@ -61,32 +53,27 @@ DO NOT WRITE ANYTHING ELSE.
     try {
       parsed = JSON.parse(aiReply);
     } catch {
-      parsed = null;
+      return res.status(500).json({ reply: "AI response parsing failed" });
     }
 
-    // 🔥 If AI detected OTP intent
-    if (parsed?.intent === "send_otp") {
+    // 🔥 OTP INTENT
+    if (parsed.intent === "send_otp") {
 
-      // If phone missing
       if (!parsed.phone) {
         return res.status(200).json({
           reply: "Please provide a valid phone number."
         });
       }
 
-      // Validate phone
       if (!/^[0-9]{10}$/.test(parsed.phone)) {
         return res.status(200).json({
           reply: "Invalid phone number format."
         });
       }
 
-      // 🔥 Call your backend
       const otpResponse = await fetch("https://sms.stazy.live/", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           phone: parsed.phone,
           action: "send_otp"
@@ -106,10 +93,14 @@ DO NOT WRITE ANYTHING ELSE.
       }
     }
 
-    // 🧠 Normal conversation
-    return res.status(200).json({
-      reply: aiReply
-    });
+    // 🧠 NORMAL INTENT
+    if (parsed.intent === "normal") {
+      return res.status(200).json({
+        reply: parsed.reply
+      });
+    }
+
+    return res.status(500).json({ reply: "Unknown intent" });
 
   } catch (error) {
     return res.status(500).json({ error: "Server error" });
