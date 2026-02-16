@@ -1,9 +1,10 @@
 export default async function handler(req, res) {
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { message } = req.body;
+  const { message, adminUid, company } = req.body;
 
   if (!message) {
     return res.status(400).json({ error: "Message missing" });
@@ -11,6 +12,7 @@ export default async function handler(req, res) {
 
   try {
 
+    // 🔥 Ask AI for intent classification
     const aiResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -27,13 +29,20 @@ You are Shft-In AI Assistant made by Neeraj.
 
 You must ALWAYS respond in valid JSON.
 
-FORMAT:
-
 If OTP request:
 {"intent":"send_otp","phone":"xxxxxxxxxx"}
 
-If phone missing:
-{"intent":"send_otp","phone":null}
+If asking for property details:
+{"intent":"property_detail","propertyName":"name"}
+
+If asking number of properties:
+{"intent":"property_count"}
+
+If asking to list properties:
+{"intent":"property_list"}
+
+If asking to filter properties:
+{"intent":"property_filter","propertyType":"PG","propertyLocation":"Noida"}
 
 If normal:
 {"intent":"normal","reply":"full reply here"}
@@ -47,28 +56,15 @@ DO NOT WRITE ANYTHING ELSE.
     });
 
     const aiData = await aiResponse.json();
-    const aiReply = aiData.choices?.[0]?.message?.content?.trim() || "";
+    const parsed = JSON.parse(aiData.choices?.[0]?.message?.content || "{}");
 
-    let parsed;
-    try {
-      parsed = JSON.parse(aiReply);
-    } catch {
-      return res.status(500).json({ reply: "AI response parsing failed" });
-    }
-
-    // 🔥 OTP INTENT
+    // ================================
+    // 🔥 OTP
+    // ================================
     if (parsed.intent === "send_otp") {
 
-      if (!parsed.phone) {
-        return res.status(200).json({
-          reply: "Please provide a valid phone number."
-        });
-      }
-
-      if (!/^[0-9]{10}$/.test(parsed.phone)) {
-        return res.status(200).json({
-          reply: "Invalid phone number format."
-        });
+      if (!parsed.phone || !/^[0-9]{10}$/.test(parsed.phone)) {
+        return res.status(200).json({ reply: "Invalid phone number." });
       }
 
       const otpResponse = await fetch("https://sms.stazy.live/", {
@@ -82,18 +78,79 @@ DO NOT WRITE ANYTHING ELSE.
 
       const otpResult = await otpResponse.json();
 
-      if (otpResult.status === "success") {
-        return res.status(200).json({
-          reply: "OTP sent successfully"
-        });
-      } else {
-        return res.status(500).json({
-          reply: "Failed to send OTP"
-        });
-      }
+      return res.status(200).json({
+        reply: otpResult.status === "success"
+          ? "OTP sent successfully"
+          : "Failed to send OTP"
+      });
     }
 
-    // 🧠 NORMAL INTENT
+    // ================================
+    // 🔥 PROPERTY COUNT
+    // ================================
+    if (parsed.intent === "property_count") {
+
+      const response = await fetch(
+        `https://api.stazy.live/PropertyDetails.php?action=count&adminUid=${adminUid}&company=${company}`
+      );
+
+      const data = await response.json();
+
+      return res.status(200).json({
+        reply: `You have ${data.totalProperties} properties.`
+      });
+    }
+
+    // ================================
+    // 🔥 PROPERTY LIST
+    // ================================
+    if (parsed.intent === "property_list") {
+
+      const response = await fetch(
+        `https://api.stazy.live/PropertyDetails.php?action=list&adminUid=${adminUid}&company=${company}`
+      );
+
+      const data = await response.json();
+
+      return res.status(200).json({
+        reply: `Your properties are: ${data.propertyNames.join(", ")}`
+      });
+    }
+
+    // ================================
+    // 🔥 PROPERTY DETAIL
+    // ================================
+    if (parsed.intent === "property_detail") {
+
+      const response = await fetch(
+        `https://api.stazy.live/PropertyDetails.php?action=detail&adminUid=${adminUid}&company=${company}&propertyId=${parsed.propertyName}`
+      );
+
+      const data = await response.json();
+
+      if (!data.success) {
+        return res.status(200).json({
+          reply: "Property not found."
+        });
+      }
+
+      const p = data.data.propertyData;
+
+      return res.status(200).json({
+        reply: `
+Property Name: ${p.propertyName}
+Location: ${p.propertyLocation}
+Type: ${p.propertyType}
+Rent: ₹${p.rent}
+Food: ${p.FoodAvail}
+Rooms: ${p.numberOfRooms}
+        `
+      });
+    }
+
+    // ================================
+    // 🔥 NORMAL CHAT
+    // ================================
     if (parsed.intent === "normal") {
       return res.status(200).json({
         reply: parsed.reply
